@@ -9,6 +9,9 @@ const port = 5000;
 app.use(express.json());
 app.use(cors());
 
+// Define model once
+const SuperStoreModel = mongoose.model("superstores", superStoresSchema.superStoresSchema);
+
 app.listen(port, async () => {
     console.log(`Server is running. Port: ${port}`);
     try {
@@ -27,37 +30,29 @@ app.get('/', (req, res) => {
     res.send("Hello World");
 });
 
+// GET all data
 app.get('/getAllData', async (req, res) => {
-    const { recordPerPage = '', pageNo = 1, productName = '', category = '', subCategory = '' } = req.query;
-
-    console.log("Query Parameters:", { recordPerPage, pageNo, productName, category, subCategory });
-
     try {
-        const superStores = mongoose.model("superstores", superStoresSchema.superStoresSchema);
+        const { recordPerPage = '', pageNo = 1, productName = '', category = '', subCategory = '' } = req.query;
 
-        let query = {};
+        const query = {};
 
         if (productName) {
-            query["Product Name"] = { $regex: `.*${productName}.*`, $options: 'i' };
+            query["Product Name"] = { $regex: new RegExp(productName, 'i') };
         }
 
         if (category) {
-            query["Category"] = { $regex: `.*${category}.*`, $options: 'i' };
+            query["Category"] = { $regex: new RegExp(category, 'i') };
         }
 
         if (subCategory) {
-            query["Sub-Category"] = { $regex: `.*${subCategory}.*`, $options: 'i' };
+            query["Sub-Category"] = { $regex: new RegExp(subCategory, 'i') };
         }
 
-        console.log("Constructed Query:", query);
-
-        const totalRecord = await superStores.countDocuments(query);
-        console.log("Total Records:", totalRecord);
-
-        const data = await superStores.find(query)
-            .skip((pageNo - 1) * parseInt(recordPerPage))
+        const totalRecord = await SuperStoreModel.countDocuments(query);
+        const data = await SuperStoreModel.find(query)
+            .skip((parseInt(pageNo) - 1) * parseInt(recordPerPage))
             .limit(parseInt(recordPerPage));
-        console.log("Data Fetched:", data);
 
         res.json({
             data: data,
@@ -69,14 +64,12 @@ app.get('/getAllData', async (req, res) => {
     }
 });
 
+// DELETE product
 app.delete('/deleteProduct/:id', async (req, res) => {
     const productId = req.params.id;
 
     try {
-        const superStoresModel = mongoose.model("superstores", superStoresSchema.superStoresSchema);
-
-        // Find and delete the product by ID
-        const deletedProduct = await superStoresModel.findByIdAndDelete(productId);
+        const deletedProduct = await SuperStoreModel.findByIdAndDelete(productId);
 
         if (!deletedProduct) {
             return res.status(404).json({ message: "Product not found" });
@@ -89,10 +82,10 @@ app.delete('/deleteProduct/:id', async (req, res) => {
     }
 });
 
+// POST add SuperStore
 app.post('/addSuperStore', async (req, res) => {
     const params = req.body;
-    const superstores = mongoose.model("superstores", superStoresSchema.superStoresSchema);
-    const model = new superstores(params);
+    const model = new SuperStoreModel(params);
 
     try {
         await model.save();
@@ -107,15 +100,85 @@ app.post('/addSuperStore', async (req, res) => {
     }
 });
 
-
-app.put('/updateSuperStore/:_id', async (req, res) => {
-    const { _id } = req.params;
+// PUT update SuperStore
+app.put('/updateSuperStore/:id', async (req, res) => {
+    const { id } = req.params;
     const params = req.body;
-    const superstores = mongoose.model("superstores", superStoresSchema.superStoresSchema);
-    const result = await superstores.findByIdAndUpdate(_id,params);
-    res.json({
-        status_code: result ? 200 : 400,
-    });
+
+    try {
+        const result = await SuperStoreModel.findByIdAndUpdate(id, params);
+        res.json({ status_code: result ? 200 : 400 });
+    } catch (error) {
+        console.error("Error updating SuperStore:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+// GET chart Sales and Profit
+app.get('/chartSalesAndProfit', async (req, res) => {
+    try {
+        const { year } = req.query;
+
+        const result = await SuperStoreModel.aggregate([
+            {
+                $project: {
+                    "Product Name": 1,
+                    "Order Date": 1,
+                    "Sales": 1,
+                    "Profit": 1
+                }
+            },
+            {
+                $group: {
+                    _id: {
+                        month: { $month: "$Order Date" },
+                        year: { $year: "$Order Date" }
+                    },
+                    total_sales: { $sum: "$Profit" }
+                }
+            },
+            {
+                $match: {
+                    "_id.year": parseInt(year)
+                }
+            },
+            {
+                $sort: { "_id.year": 1, "_id.month": 1 }
+            }
+        ]);
+
+        res.json(result);
+    } catch (error) {
+        console.error("Error fetching chart data:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+});
+
+// GET years
+app.get('/getYear', async (req, res) => {
+    try {
+        const result = await SuperStoreModel.aggregate([
+            {
+                $project: {
+                    _id: 0,
+                    "Order Date": 1
+                }
+            },
+            {
+                $group: {
+                    _id: { year: { $year: "$Order Date" } }
+                }
+            },
+            {
+                $sort: { "_id.year": 1 }
+            }
+        ]);
+
+        res.json(result.map(el => el._id.year));
+    } catch (error) {
+        console.error("Error fetching years:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
 });
 
 module.exports = app;
